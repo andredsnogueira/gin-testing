@@ -4,62 +4,98 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/sqlite"
 )
 
-var db = make(map[string]string)
+type Post struct {
+	gorm.Model
+	Title string
+	Body  string
+}
 
-func setupRouter() *gin.Engine {
-	// Disable Console Color
-	// gin.DisableConsoleColor()
-	r := gin.Default()
+var db *gorm.DB
 
-	// Ping test
-	r.GET("/ping", func(c *gin.Context) {
-		c.String(http.StatusOK, "pong")
-	})
+func init() {
+	var err error
+	db, err = gorm.Open("sqlite3", "sqlite.db")
 
-	// Get user value
-	r.GET("/user/:name", func(c *gin.Context) {
-		user := c.Params.ByName("name")
-		value, ok := db[user]
-		if ok {
-			c.JSON(http.StatusOK, gin.H{"user": user, "value": value})
-		} else {
-			c.JSON(http.StatusOK, gin.H{"user": user, "status": "no value"})
-		}
-	})
+	if err != nil {
+		panic("Failed to connect database")
+	}
 
-	// Authorized group (uses gin.BasicAuth() middleware)
-	// Same than:
-	// authorized := r.Group("/")
-	// authorized.Use(gin.BasicAuth(gin.Credentials{
-	//	  "foo":  "bar",
-	//	  "manu": "123",
-	//}))
-	authorized := r.Group("/", gin.BasicAuth(gin.Accounts{
-		"foo":  "bar", // user:foo password:bar
-		"manu": "123", // user:manu password:123
-	}))
-
-	authorized.POST("admin", func(c *gin.Context) {
-		user := c.MustGet(gin.AuthUserKey).(string)
-
-		// Parse JSON
-		var json struct {
-			Value string `json:"value" binding:"required"`
-		}
-
-		if c.Bind(&json) == nil {
-			db[user] = json.Value
-			c.JSON(http.StatusOK, gin.H{"status": "ok"})
-		}
-	})
-
-	return r
+	db.AutoMigrate(&Post{})
 }
 
 func main() {
 	r := setupRouter()
-	// Listen and Server in 0.0.0.0:8080
 	r.Run(":8080")
+}
+
+func setupRouter() *gin.Engine {
+	r := gin.Default()
+
+	r.GET("/", version)
+	r.GET("/posts", getPosts)
+	r.GET("/posts/:id", getPost)
+	r.POST("/posts", createPost)
+	r.DELETE("/posts/:id", deletePost)
+
+	return r
+}
+
+func version(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"version": "1.0"})
+}
+
+func getPosts(c *gin.Context) {
+	var posts []Post
+
+	db.Find(&posts)
+
+	if len(posts) > 0 {
+		c.JSON(http.StatusOK, gin.H{"data": posts})
+		return
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"data": "No posts found."})
+}
+
+func getPost(c *gin.Context) {
+	var post Post
+	postID := c.Params.ByName("id")
+
+	db.First(&post, postID)
+
+	if post.ID != 0 {
+		c.JSON(http.StatusOK, gin.H{"data": post})
+		return
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"data": "Post not found."})
+}
+
+func createPost(c *gin.Context) {
+	postTitle := c.PostForm("title")
+	postBody := c.PostForm("body")
+
+	db.Create(&Post{Title: postTitle, Body: postBody})
+
+	c.JSON(http.StatusCreated, gin.H{"data": "Post created."})
+}
+
+func deletePost(c *gin.Context) {
+	var post Post
+	postID := c.Params.ByName("id")
+
+	db.First(&post, postID)
+
+	if post.ID == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"data": "Not found."})
+		return
+	}
+
+	db.Delete(&post)
+
+	c.JSON(http.StatusOK, gin.H{"data": "Post deleted."})
 }
